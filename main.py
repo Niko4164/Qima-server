@@ -9,7 +9,6 @@ import httpx, asyncio, re, os, json, sqlite3
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from contextlib import contextmanager
-import threading
 
 app = FastAPI(title="QIMA LatAm Trials API", version="3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -644,19 +643,17 @@ async def full_sync():
     finally:
         _sync_running = False
 
-def schedule_nightly():
-    """Lance la synchronisation chaque nuit à 2h00 UTC."""
-    import time
+async def schedule_nightly():
+    """Lance la synchronisation chaque nuit à 2h00 UTC — natif asyncio, pas de thread."""
     while True:
         now = datetime.now()
-        # Prochaine exécution à 2h00
         next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run += timedelta(days=1)
         wait_seconds = (next_run - now).total_seconds()
-        print(f"Next sync scheduled at {next_run.strftime('%Y-%m-%d %H:%M:%S')} (in {wait_seconds/3600:.1f}h)")
-        time.sleep(wait_seconds)
-        asyncio.run(full_sync())
+        print(f"Next sync at {next_run.strftime('%Y-%m-%d %H:%M:%S')} (in {wait_seconds/3600:.1f}h)")
+        await asyncio.sleep(wait_seconds)
+        await full_sync()
 
 # ══════════════════════════════════════════════════════════════
 # ENDPOINTS API
@@ -664,23 +661,29 @@ def schedule_nightly():
 
 @app.on_event("startup")
 async def startup():
-    """Au démarrage : initialise la DB et lance une sync si nécessaire."""
-    init_db()
-    # Vérifier si la base est vide
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM studies").fetchone()[0]
+    """Au démarrage : initialise la DB, lance une sync si nécessaire + scheduler."""
+    try:
+        init_db()
+    except Exception as e:
+        print(f"DB init error: {e}")
 
-    if count == 0:
-        print("Database empty — launching initial sync...")
+    try:
+        with get_db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM studies").fetchone()[0]
+
+        if count == 0:
+            print("Database empty — launching initial sync...")
+            asyncio.create_task(full_sync())
+        else:
+            print(f"Database has {count} studies — ready to serve")
+            _sync_status["last_count"] = count
+            _sync_status["status"] = "ok (from db)"
+    except Exception as e:
+        print(f"Startup check error: {e}")
         asyncio.create_task(full_sync())
-    else:
-        print(f"Database has {count} studies — ready to serve")
-        _sync_status["last_count"] = count
-        _sync_status["status"] = "ok (from db)"
 
-    # Lancer le scheduler nocturne dans un thread séparé
-    t = threading.Thread(target=schedule_nightly, daemon=True)
-    t.start()
+    # Scheduler nocturne — natif asyncio, pas de thread
+    asyncio.create_task(schedule_nightly())
 
 
 @app.get("/api/health")
@@ -817,4 +820,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"Starting QIMA LatAm Trials API v3.0 on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
-
