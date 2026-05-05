@@ -10,7 +10,10 @@ from datetime import datetime, timedelta
 from collections import Counter
 from bs4 import BeautifulSoup
 
+from fastapi.middleware.gzip import GZipMiddleware
+
 app = FastAPI(title="QIMA LatAm Trials API", version="4.0")
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ══════════════════════════════════════════════════════════════
