@@ -788,6 +788,33 @@ async def stats():
         "jobs_log":   CACHE["jobs_done"][-10:],
     }
 
+@app.post("/api/ingest")
+async def ingest_studies(payload: dict):
+    """
+    Reçoit des études depuis le scraper local (Mac).
+    Utilisé pour Plataforma Brasil et autres sources
+    inaccessibles depuis Railway (IP non-brésilienne).
+    """
+    studies = payload.get("studies", [])
+    source  = payload.get("source", "External scraper")
+
+    if not studies:
+        return {"status": "ok", "added": 0, "message": "No studies provided"}
+
+    added = add_to_cache(studies)
+    CACHE["updated_at"] = datetime.now()
+
+    print(f"[INGEST] {source}: {len(studies)} received, {added} new (total: {len(CACHE['studies'])})")
+
+    return {
+        "status":  "ok",
+        "added":   added,
+        "total":   len(CACHE["studies"]),
+        "source":  source,
+        "received":len(studies),
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT",8000)))
